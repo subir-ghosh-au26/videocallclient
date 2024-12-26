@@ -3,6 +3,7 @@ import io from 'socket.io-client';
 import Video from './Video';
 import './Room.css';
 import { MdCallEnd, MdMic, MdMicOff, MdVideocam, MdVideocamOff } from "react-icons/md";
+
 const socket = io('https://videocall-viic.onrender.com');
 
 function Room({ roomId }) {
@@ -59,11 +60,11 @@ function Room({ roomId }) {
         }
     }, [roomId]);
 
-   useEffect(() => {
+    useEffect(() => {
         if (myVideo.current && myStream) {
             myVideo.current.srcObject = myStream;
         }
-   }, [myStream])
+    }, [myStream])
 
     const getMedia = async () => {
         try {
@@ -75,9 +76,9 @@ function Room({ roomId }) {
     };
 
     const toggleAudio = () => {
-         if (myStream) {
-             myStream.getAudioTracks().forEach((track) => track.enabled = isAudioMuted)
-         }
+        if (myStream) {
+            myStream.getAudioTracks().forEach((track) => track.enabled = isAudioMuted)
+        }
         setIsAudioMuted(!isAudioMuted)
     }
 
@@ -93,7 +94,7 @@ function Room({ roomId }) {
             myStream.getTracks().forEach((track) => track.stop())
             setMyStream(null);
         }
-         window.location.reload(); //quick and easy
+        window.location.reload(); //quick and easy
     };
 
 
@@ -121,10 +122,12 @@ function Room({ roomId }) {
         };
 
         peerConnection.ontrack = (event) => {
-            setRemoteStreams(prevStreams => ({
-                ...prevStreams,
-                [target]: event.streams[0]
-            }))
+          setRemoteStreams(prevStreams => {
+                return {
+                  ...prevStreams,
+                    [target]: event.streams[0]
+                  };
+              })
         };
 
         const offer = await peerConnection.createOffer();
@@ -159,11 +162,13 @@ function Room({ roomId }) {
             }
         };
 
-        peerConnection.ontrack = (event) => {
-            setRemoteStreams(prevStreams => ({
-                ...prevStreams,
-                [sender]: event.streams[0]
-            }))
+      peerConnection.ontrack = (event) => {
+           setRemoteStreams(prevStreams => {
+               return {
+                   ...prevStreams,
+                   [sender]: event.streams[0]
+               };
+           })
         };
 
         await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
@@ -202,11 +207,11 @@ function Room({ roomId }) {
     };
 
     const handleUserDisconnect = (userId) => {
-        setRemoteStreams(prevStreams => {
-            const newStreams = { ...prevStreams };
-            delete newStreams[userId];
+      setRemoteStreams(prevStreams => {
+          const newStreams = { ...prevStreams };
+          delete newStreams[userId];
             return newStreams;
-        });
+      });
         if (peers.current[userId]) {
             peers.current[userId].close();
             delete peers.current[userId];
@@ -216,36 +221,36 @@ function Room({ roomId }) {
 
     return (
         <div className="room">
-           <div className="videos-area">
+            <div className="videos-area">
                 <div className="my-video-area">
-                     <h2>My Video</h2>
-                     {myStream && (
-                      <Video stream={myStream} muted autoPlay participantName="Me"  />
-                     )}
-                 </div>
+                    <h2>My Video</h2>
+                    {myStream && (
+                        <Video stream={myStream} muted autoPlay participantName="Me"/>
+                    )}
+                </div>
                 <div className="remote-videos-area">
-                     <h2>Participants</h2>
-                     <div className="remote-videos">
-                         {Object.entries(remoteStreams).map(([key, stream]) => (
-                             <div key={key}>
-                                 <Video stream={stream} autoPlay  participantName={key}/>
-                             </div>
-                         ))}
-                     </div>
+                    <h2>Participants</h2>
+                    <div className="remote-videos">
+                        {Object.entries(remoteStreams).map(([key, stream]) => (
+                            <div key={key}>
+                                <Video stream={stream} autoPlay  participantName={key}/>
+                            </div>
+                        ))}
+                    </div>
                 </div>
             </div>
-             <div className="controls">
-                 <button onClick={toggleAudio} className="control-button">
-                     {isAudioMuted ? <MdMicOff /> : <MdMic />}
-                 </button>
-                 <button onClick={toggleVideo} className="control-button">
-                     {isVideoMuted ? <MdVideocamOff /> : <MdVideocam />}
-                 </button>
-                 <button onClick={leaveCall} className="control-button leave-button">
-                     <MdCallEnd />
-                 </button>
-              </div>
-         </div>
+            <div className="controls">
+                <button onClick={toggleAudio} className="control-button">
+                    {isAudioMuted ? <MdMicOff /> : <MdMic />}
+                </button>
+                <button onClick={toggleVideo} className="control-button">
+                    {isVideoMuted ? <MdVideocamOff /> : <MdVideocam />}
+                </button>
+                <button onClick={leaveCall} className="control-button leave-button">
+                    <MdCallEnd />
+                </button>
+            </div>
+        </div>
     );
 }
 
