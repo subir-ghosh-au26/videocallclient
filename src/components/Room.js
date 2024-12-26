@@ -8,15 +8,14 @@ const socket = io('https://videocall-viic.onrender.com');
 
 function Room({ roomId }) {
     const [myStream, setMyStream] = useState(null);
-    const [remoteStreams, setRemoteStreams] = useState({});
+    const [remoteStreams, setRemoteStreams] = useState(new Map()); // Changed to Map
     const [userId, setUserId] = useState(null);
     const [roomClients, setRoomClients] = useState([]);
     const [isAudioMuted, setIsAudioMuted] = useState(false);
     const [isVideoMuted, setIsVideoMuted] = useState(false);
     const peers = useRef({});
     const myVideo = useRef(null);
-    const streamRefs = useRef({});
-
+    const streamRefs = useRef(new Map()); //Use map as well
 
     useEffect(() => {
         socket.on('connect', () => {
@@ -53,12 +52,11 @@ function Room({ roomId }) {
         });
     }, []);
 
-
     useEffect(() => {
         if (roomId) {
             getMedia();
             socket.emit('join', roomId);
-            setRemoteStreams({}); //Clear previous remote videos
+            setRemoteStreams(new Map());
         }
     }, [roomId]);
 
@@ -111,7 +109,6 @@ function Room({ roomId }) {
 
         if (myStream) myStream.getTracks().forEach((track) => peerConnection.addTrack(track, myStream));
 
-
         peerConnection.onicecandidate = (event) => {
             if (event.candidate) {
                 socket.emit('ice-candidate', {
@@ -122,17 +119,18 @@ function Room({ roomId }) {
             }
         };
 
+      peerConnection.ontrack = (event) => {
+         if (!event.streams || event.streams.length === 0) return;
+            const stream = event.streams[0];
 
-       peerConnection.ontrack = (event) => {
-        if (!event.streams || event.streams.length === 0) return;
-         const stream = event.streams[0];
+            streamRefs.current.set(target, stream);
 
-           setRemoteStreams(prevStreams => ({
-             ...prevStreams,
-                [target]: stream
-           }));
-        };
-
+             setRemoteStreams(prevStreams => {
+                const newStreams = new Map(prevStreams);
+                newStreams.set(target,stream);
+                return newStreams;
+             });
+      };
 
         const offer = await peerConnection.createOffer();
         await peerConnection.setLocalDescription(offer);
@@ -155,7 +153,6 @@ function Room({ roomId }) {
 
         if (myStream) myStream.getTracks().forEach((track) => peerConnection.addTrack(track, myStream));
 
-
         peerConnection.onicecandidate = (event) => {
             if (event.candidate) {
                 socket.emit('ice-candidate', {
@@ -165,13 +162,19 @@ function Room({ roomId }) {
                 });
             }
         };
-      peerConnection.ontrack = (event) => {
+
+
+        peerConnection.ontrack = (event) => {
              if (!event.streams || event.streams.length === 0) return;
             const stream = event.streams[0];
-           setRemoteStreams(prevStreams => ({
-               ...prevStreams,
-               [sender]: stream
-           }));
+
+            streamRefs.current.set(sender, stream);
+
+            setRemoteStreams(prevStreams => {
+                const newStreams = new Map(prevStreams);
+                newStreams.set(sender,stream);
+                return newStreams;
+             });
         };
 
         await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
@@ -185,7 +188,6 @@ function Room({ roomId }) {
         });
     };
 
-
     const handleAnswer = async (payload) => {
         const { answer, sender } = payload;
         const peerConnection = peers.current[sender];
@@ -194,52 +196,47 @@ function Room({ roomId }) {
         }
     };
 
-
     const handleIceCandidate = async (payload) => {
         const { candidate, sender } = payload;
         const peerConnection = peers.current[sender];
         if (peerConnection) {
             try {
                 await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
-            }
-            catch (e) {
+            } catch (e) {
                 console.log("Error adding ice", e)
             }
-
         }
     };
 
     const handleUserDisconnect = (userId) => {
-        setRemoteStreams(prevStreams => {
-            const newStreams = { ...prevStreams };
-            delete newStreams[userId];
-            return newStreams;
-        });
+         setRemoteStreams(prevStreams => {
+             const newStreams = new Map(prevStreams);
+             newStreams.delete(userId);
+             return newStreams;
+         });
+
         if (peers.current[userId]) {
             peers.current[userId].close();
             delete peers.current[userId];
         }
+        streamRefs.current.delete(userId) // clear the stream ref too
     }
 
+
+    const allStreams = {
+        ...(myStream ? { [userId]: myStream } : {}),
+        ...Object.fromEntries(remoteStreams)
+    };
 
     return (
         <div className="room">
             <div className="videos-area">
-                <div className="my-video-area">
-                    <h2>My Video</h2>
-                    {myStream && (
-                        <Video stream={myStream} muted autoPlay participantName="Me"/>
-                    )}
-                </div>
-                <div className="remote-videos-area">
-                    <h2>Participants</h2>
-                    <div className="remote-videos">
-                        {Object.entries(remoteStreams).map(([key, stream]) => (
-                            <div key={key}>
-                                <Video stream={stream} autoPlay participantName={key}/>
-                            </div>
-                        ))}
-                    </div>
+                <div className="videos-grid">
+                    {Object.entries(allStreams).map(([key, stream]) => (
+                        <div key={key} className="video-item">
+                            <Video stream={stream} autoPlay muted={key === userId} participantName={key === userId ? "Me" : key}  />
+                        </div>
+                    ))}
                 </div>
             </div>
             <div className="controls">
