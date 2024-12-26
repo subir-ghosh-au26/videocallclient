@@ -8,26 +8,22 @@ const socket = io('https://videocall-viic.onrender.com');
 
 function Room({ roomId }) {
     const [myStream, setMyStream] = useState(null);
-     const remoteStreams = useRef(new Map()); // using ref
+    const remoteStreams = useRef(new Map());
     const [userId, setUserId] = useState(null);
-    const [roomClients, setRoomClients] = useState([]);
     const [isAudioMuted, setIsAudioMuted] = useState(false);
     const [isVideoMuted, setIsVideoMuted] = useState(false);
     const peers = useRef({});
     const myVideo = useRef(null);
-     const streamRefs = useRef(new Map()); //Using ref to keep references
-    const [, updateState] = useState(); // Helper function for re-rendering
-
-    const forceUpdate = useCallback(() => updateState({}), []); //Helper function to re-render
+    const streamRefs = useRef(new Map());
+    const localStream = useRef(null)
+    const [, updateState] = useState();
+    const forceUpdate = useCallback(() => updateState({}), []);
 
     useEffect(() => {
         socket.on('connect', () => {
             setUserId(socket.id);
         })
 
-        socket.on('room-clients', (clients) => {
-            setRoomClients(clients)
-        })
 
         socket.on('new-user', (newUserId) => {
             console.log(`New user joined ${newUserId}`)
@@ -55,13 +51,12 @@ function Room({ roomId }) {
         });
     }, []);
 
-
     useEffect(() => {
         if (roomId) {
             getMedia();
             socket.emit('join', roomId);
-          remoteStreams.current = new Map() // reset remote streams
-             forceUpdate();
+           remoteStreams.current = new Map()
+            forceUpdate();
         }
     }, [roomId]);
 
@@ -75,164 +70,182 @@ function Room({ roomId }) {
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
             setMyStream(stream);
+             localStream.current = stream;
         } catch (error) {
             console.error('Error accessing media:', error);
         }
     };
 
     const toggleAudio = () => {
-        if (myStream) {
-            myStream.getAudioTracks().forEach((track) => track.enabled = isAudioMuted)
-        }
-        setIsAudioMuted(!isAudioMuted)
-    }
+        if (localStream.current) {
+           localStream.current.getAudioTracks().forEach((track) => track.enabled = !isAudioMuted)
+           setIsAudioMuted(!isAudioMuted);
+            console.log("Audio toggled", localStream.current.getAudioTracks()[0].enabled)
+       }
+   }
 
     const toggleVideo = () => {
-        if (myStream) {
-            myStream.getVideoTracks().forEach((track) => track.enabled = isVideoMuted)
-        }
-        setIsVideoMuted(!isVideoMuted)
+        if (localStream.current) {
+           localStream.current.getVideoTracks().forEach((track) => track.enabled = !isVideoMuted)
+            setIsVideoMuted(!isVideoMuted);
+            console.log("Video toggled", localStream.current.getVideoTracks()[0].enabled)
+       }
     }
-
     const clearAllRefs = () => {
         streamRefs.current.clear();
         peers.current = {};
     };
-
 
     const leaveCall = () => {
         if (myStream) {
             myStream.getTracks().forEach((track) => track.stop())
             setMyStream(null);
         }
-        clearAllRefs()
-         window.location.reload(); //quick and easy
+       clearAllRefs()
+       window.location.reload();
     };
 
-
-    const startCall = async (target) => {
-        console.log(`starting call with ${target}`)
-        const peerConnection = new RTCPeerConnection({
-            iceServers: [{
-                urls: ['stun:stun.l.google.com:19302',
-                    'stun:stun1.l.google.com:19302']
-            }]
-        });
-        peers.current[target] = peerConnection;
-
-        if (myStream) myStream.getTracks().forEach((track) => peerConnection.addTrack(track, myStream));
+     const startCall = async (target) => {
+         console.log(`starting call with ${target}`)
+         const peerConnection = new RTCPeerConnection({
+             iceServers: [{
+                 urls: ['stun:stun.l.google.com:19302',
+                     'stun:stun1.l.google.com:19302']
+             }]
+         });
+           peers.current = { ...peers.current, [target]: peerConnection };
+         if (myStream) myStream.getTracks().forEach((track) => peerConnection.addTrack(track, myStream));
 
 
-        peerConnection.onicecandidate = (event) => {
-            if (event.candidate) {
-                socket.emit('ice-candidate', {
-                    target,
-                    candidate: event.candidate,
-                    sender: userId
-                });
-            }
-        };
-        peerConnection.ontrack = (event) => {
-            if (!event.streams || event.streams.length === 0) return;
-             const stream = event.streams[0];
-             streamRefs.current.set(target,stream);
-               const newRemoteStreams = new Map(remoteStreams.current);
-             newRemoteStreams.set(target,stream);
-             remoteStreams.current = newRemoteStreams; //Update ref value
-             forceUpdate(); //Force re-render
-        };
+         peerConnection.onicecandidate = (event) => {
+             if (event.candidate) {
+                console.log("ICE Candidate", event.candidate)
+                 socket.emit('ice-candidate', {
+                     target,
+                     candidate: event.candidate,
+                     sender: userId
+                 });
+             }
+         };
 
+       peerConnection.ontrack = (event) => {
+         if (!event.streams || event.streams.length === 0) {
+                console.log(`No streams in ontrack event from ${target}`)
+             return;
+          };
+         const stream = event.streams[0];
+         streamRefs.current.set(target, stream);
+            const newRemoteStreams = new Map(remoteStreams.current);
+        newRemoteStreams.set(target,stream);
+        remoteStreams.current = newRemoteStreams;
+         forceUpdate();
+           console.log(`Received ontrack for ${target}`, stream)
+       };
 
-        const offer = await peerConnection.createOffer();
-        await peerConnection.setLocalDescription(offer);
-        socket.emit('offer', {
-            target,
-            offer,
-            sender: userId
-        });
-    };
+         const offer = await peerConnection.createOffer();
+         await peerConnection.setLocalDescription(offer);
+       console.log(`Offer created for ${target}`, offer)
+         socket.emit('offer', {
+             target,
+             offer,
+             sender: userId
+         });
+     };
+
 
     const handleOffer = async (payload) => {
         const { offer, sender } = payload;
+        console.log("Received offer from", sender)
         const peerConnection = new RTCPeerConnection({
-            iceServers: [{
-                urls: ['stun:stun.l.google.com:19302',
-                    'stun:stun1.l.google.com:19302']
+             iceServers: [{
+                 urls: ['stun:stun.l.google.com:19302',
+                     'stun:stun1.l.google.com:19302']
             }]
-        });
-        peers.current[sender] = peerConnection;
-
-        if (myStream) myStream.getTracks().forEach((track) => peerConnection.addTrack(track, myStream));
+         });
+       peers.current = { ...peers.current, [sender]: peerConnection };
 
 
-        peerConnection.onicecandidate = (event) => {
-            if (event.candidate) {
-                socket.emit('ice-candidate', {
-                    target: sender,
-                    candidate: event.candidate,
-                    sender: userId
-                });
-            }
-        };
+         if (myStream) myStream.getTracks().forEach((track) => peerConnection.addTrack(track, myStream));
 
-       peerConnection.ontrack = (event) => {
-           if (!event.streams || event.streams.length === 0) return;
-             const stream = event.streams[0];
-            streamRefs.current.set(sender,stream);
-             const newRemoteStreams = new Map(remoteStreams.current);
+
+         peerConnection.onicecandidate = (event) => {
+             if (event.candidate) {
+                  console.log("ICE Candidate", event.candidate)
+                 socket.emit('ice-candidate', {
+                     target: sender,
+                     candidate: event.candidate,
+                     sender: userId
+                 });
+             }
+         };
+
+        peerConnection.ontrack = (event) => {
+             if (!event.streams || event.streams.length === 0) {
+                console.log(`No streams in ontrack event from ${sender}`)
+                return;
+            };
+          const stream = event.streams[0];
+         streamRefs.current.set(sender, stream);
+           const newRemoteStreams = new Map(remoteStreams.current);
            newRemoteStreams.set(sender,stream);
-          remoteStreams.current = newRemoteStreams;
-           forceUpdate(); //Force Re-render
+           remoteStreams.current = newRemoteStreams;
+            forceUpdate();
+            console.log(`Received ontrack for ${sender}`, stream)
         };
 
         await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
-        const answer = await peerConnection.createAnswer();
+         const answer = await peerConnection.createAnswer();
         await peerConnection.setLocalDescription(answer);
-
-        socket.emit('answer', {
-            target: sender,
-            answer,
-            sender: userId
-        });
+       console.log(`Answer created for ${sender}`, answer)
+         socket.emit('answer', {
+             target: sender,
+             answer,
+             sender: userId
+         });
     };
-
 
     const handleAnswer = async (payload) => {
         const { answer, sender } = payload;
+       console.log(`Received answer from ${sender}`, answer);
         const peerConnection = peers.current[sender];
         if (peerConnection) {
-            await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+           await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
         }
-    };
+     };
+
 
     const handleIceCandidate = async (payload) => {
-        const { candidate, sender } = payload;
-        const peerConnection = peers.current[sender];
+         const { candidate, sender } = payload;
+         console.log(`Received ICE candidate from ${sender}`, candidate);
+         const peerConnection = peers.current[sender];
         if (peerConnection) {
-            try {
-                await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+           try {
+              await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
             } catch (e) {
-                console.log("Error adding ice", e)
+               console.error("Error adding ICE", e)
             }
         }
-    };
+     };
 
-     const handleUserDisconnect = (userId) => {
-           const newRemoteStreams = new Map(remoteStreams.current);
-           newRemoteStreams.delete(userId);
-          remoteStreams.current = newRemoteStreams;
-        forceUpdate(); //Force re-render
-          if (peers.current[userId]) {
-                peers.current[userId].close();
-             delete peers.current[userId];
+    const handleUserDisconnect = (userId) => {
+        console.log(`User ${userId} disconnected`)
+         const newRemoteStreams = new Map(remoteStreams.current);
+          newRemoteStreams.delete(userId);
+        remoteStreams.current = newRemoteStreams;
+          forceUpdate();
+
+        if (peers.current[userId]) {
+            peers.current[userId].close();
+            const newPeers = {...peers.current};
+            delete newPeers[userId];
+            peers.current = newPeers;
         }
-         streamRefs.current.delete(userId);
+       streamRefs.current.delete(userId)
     }
 
-
-     const allStreams = {
-         ...(myStream ? { [userId]: myStream } : {}),
-       ...Object.fromEntries(remoteStreams.current)
+    const allStreams = {
+        ...(myStream ? { [userId]: myStream } : {}),
+        ...Object.fromEntries(remoteStreams.current)
     };
 
 
