@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import io from 'socket.io-client';
 import Video from './Video';
 import './Room.css';
@@ -8,14 +8,17 @@ const socket = io('https://videocall-viic.onrender.com');
 
 function Room({ roomId }) {
     const [myStream, setMyStream] = useState(null);
-    const [remoteStreams, setRemoteStreams] = useState(new Map()); // Changed to Map
+     const remoteStreams = useRef(new Map()); // using ref
     const [userId, setUserId] = useState(null);
     const [roomClients, setRoomClients] = useState([]);
     const [isAudioMuted, setIsAudioMuted] = useState(false);
     const [isVideoMuted, setIsVideoMuted] = useState(false);
     const peers = useRef({});
     const myVideo = useRef(null);
-    const streamRefs = useRef(new Map()); //Use map as well
+     const streamRefs = useRef(new Map()); //Using ref to keep references
+    const [, updateState] = useState(); // Helper function for re-rendering
+
+    const forceUpdate = useCallback(() => updateState({}), []); //Helper function to re-render
 
     useEffect(() => {
         socket.on('connect', () => {
@@ -52,11 +55,13 @@ function Room({ roomId }) {
         });
     }, []);
 
+
     useEffect(() => {
         if (roomId) {
             getMedia();
             socket.emit('join', roomId);
-            setRemoteStreams(new Map());
+          remoteStreams.current = new Map() // reset remote streams
+             forceUpdate();
         }
     }, [roomId]);
 
@@ -89,13 +94,21 @@ function Room({ roomId }) {
         setIsVideoMuted(!isVideoMuted)
     }
 
+    const clearAllRefs = () => {
+        streamRefs.current.clear();
+        peers.current = {};
+    };
+
+
     const leaveCall = () => {
         if (myStream) {
             myStream.getTracks().forEach((track) => track.stop())
             setMyStream(null);
         }
-        window.location.reload(); //quick and easy
+        clearAllRefs()
+         window.location.reload(); //quick and easy
     };
+
 
     const startCall = async (target) => {
         console.log(`starting call with ${target}`)
@@ -109,6 +122,7 @@ function Room({ roomId }) {
 
         if (myStream) myStream.getTracks().forEach((track) => peerConnection.addTrack(track, myStream));
 
+
         peerConnection.onicecandidate = (event) => {
             if (event.candidate) {
                 socket.emit('ice-candidate', {
@@ -118,19 +132,16 @@ function Room({ roomId }) {
                 });
             }
         };
+        peerConnection.ontrack = (event) => {
+            if (!event.streams || event.streams.length === 0) return;
+             const stream = event.streams[0];
+             streamRefs.current.set(target,stream);
+               const newRemoteStreams = new Map(remoteStreams.current);
+             newRemoteStreams.set(target,stream);
+             remoteStreams.current = newRemoteStreams; //Update ref value
+             forceUpdate(); //Force re-render
+        };
 
-      peerConnection.ontrack = (event) => {
-         if (!event.streams || event.streams.length === 0) return;
-            const stream = event.streams[0];
-
-            streamRefs.current.set(target, stream);
-
-             setRemoteStreams(prevStreams => {
-                const newStreams = new Map(prevStreams);
-                newStreams.set(target,stream);
-                return newStreams;
-             });
-      };
 
         const offer = await peerConnection.createOffer();
         await peerConnection.setLocalDescription(offer);
@@ -153,6 +164,7 @@ function Room({ roomId }) {
 
         if (myStream) myStream.getTracks().forEach((track) => peerConnection.addTrack(track, myStream));
 
+
         peerConnection.onicecandidate = (event) => {
             if (event.candidate) {
                 socket.emit('ice-candidate', {
@@ -163,18 +175,14 @@ function Room({ roomId }) {
             }
         };
 
-
-        peerConnection.ontrack = (event) => {
-             if (!event.streams || event.streams.length === 0) return;
-            const stream = event.streams[0];
-
-            streamRefs.current.set(sender, stream);
-
-            setRemoteStreams(prevStreams => {
-                const newStreams = new Map(prevStreams);
-                newStreams.set(sender,stream);
-                return newStreams;
-             });
+       peerConnection.ontrack = (event) => {
+           if (!event.streams || event.streams.length === 0) return;
+             const stream = event.streams[0];
+            streamRefs.current.set(sender,stream);
+             const newRemoteStreams = new Map(remoteStreams.current);
+           newRemoteStreams.set(sender,stream);
+          remoteStreams.current = newRemoteStreams;
+           forceUpdate(); //Force Re-render
         };
 
         await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
@@ -187,6 +195,7 @@ function Room({ roomId }) {
             sender: userId
         });
     };
+
 
     const handleAnswer = async (payload) => {
         const { answer, sender } = payload;
@@ -208,25 +217,24 @@ function Room({ roomId }) {
         }
     };
 
-    const handleUserDisconnect = (userId) => {
-         setRemoteStreams(prevStreams => {
-             const newStreams = new Map(prevStreams);
-             newStreams.delete(userId);
-             return newStreams;
-         });
-
-        if (peers.current[userId]) {
-            peers.current[userId].close();
-            delete peers.current[userId];
+     const handleUserDisconnect = (userId) => {
+           const newRemoteStreams = new Map(remoteStreams.current);
+           newRemoteStreams.delete(userId);
+          remoteStreams.current = newRemoteStreams;
+        forceUpdate(); //Force re-render
+          if (peers.current[userId]) {
+                peers.current[userId].close();
+             delete peers.current[userId];
         }
-        streamRefs.current.delete(userId) // clear the stream ref too
+         streamRefs.current.delete(userId);
     }
 
 
-    const allStreams = {
-        ...(myStream ? { [userId]: myStream } : {}),
-        ...Object.fromEntries(remoteStreams)
+     const allStreams = {
+         ...(myStream ? { [userId]: myStream } : {}),
+       ...Object.fromEntries(remoteStreams.current)
     };
+
 
     return (
         <div className="room">
