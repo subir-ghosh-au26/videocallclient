@@ -15,6 +15,8 @@ function Room({ roomId }) {
     const [isVideoMuted, setIsVideoMuted] = useState(false);
     const peers = useRef({});
     const myVideo = useRef(null);
+    const streamRefs = useRef({});
+
 
     useEffect(() => {
         socket.on('connect', () => {
@@ -97,7 +99,6 @@ function Room({ roomId }) {
         window.location.reload(); //quick and easy
     };
 
-
     const startCall = async (target) => {
         console.log(`starting call with ${target}`)
         const peerConnection = new RTCPeerConnection({
@@ -121,14 +122,17 @@ function Room({ roomId }) {
             }
         };
 
-        peerConnection.ontrack = (event) => {
-          setRemoteStreams(prevStreams => {
-                return {
-                  ...prevStreams,
-                    [target]: event.streams[0]
-                  };
-              })
+
+       peerConnection.ontrack = (event) => {
+        if (!event.streams || event.streams.length === 0) return;
+         const stream = event.streams[0];
+
+           setRemoteStreams(prevStreams => ({
+             ...prevStreams,
+                [target]: stream
+           }));
         };
+
 
         const offer = await peerConnection.createOffer();
         await peerConnection.setLocalDescription(offer);
@@ -161,14 +165,13 @@ function Room({ roomId }) {
                 });
             }
         };
-
       peerConnection.ontrack = (event) => {
-           setRemoteStreams(prevStreams => {
-               return {
-                   ...prevStreams,
-                   [sender]: event.streams[0]
-               };
-           })
+             if (!event.streams || event.streams.length === 0) return;
+            const stream = event.streams[0];
+           setRemoteStreams(prevStreams => ({
+               ...prevStreams,
+               [sender]: stream
+           }));
         };
 
         await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
@@ -207,11 +210,11 @@ function Room({ roomId }) {
     };
 
     const handleUserDisconnect = (userId) => {
-      setRemoteStreams(prevStreams => {
-          const newStreams = { ...prevStreams };
-          delete newStreams[userId];
+        setRemoteStreams(prevStreams => {
+            const newStreams = { ...prevStreams };
+            delete newStreams[userId];
             return newStreams;
-      });
+        });
         if (peers.current[userId]) {
             peers.current[userId].close();
             delete peers.current[userId];
@@ -233,7 +236,7 @@ function Room({ roomId }) {
                     <div className="remote-videos">
                         {Object.entries(remoteStreams).map(([key, stream]) => (
                             <div key={key}>
-                                <Video stream={stream} autoPlay  participantName={key}/>
+                                <Video stream={stream} autoPlay participantName={key}/>
                             </div>
                         ))}
                     </div>
